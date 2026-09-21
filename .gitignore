@@ -10,4 +10,8 @@ build
 *.tsbuildinfo
 next-env.d.ts
 
+.verificar-nome
+.verificar-url
+.verificar-incidente
+
 .DS_Store
