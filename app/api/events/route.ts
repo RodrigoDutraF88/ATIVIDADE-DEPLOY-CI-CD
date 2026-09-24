@@ -4,7 +4,7 @@ import { parseEventInput } from "@/lib/events";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return Response.json(listEvents());
+  return Response.json(await listEvents());
 }
 
 export async function POST(request: Request) {
@@ -20,5 +20,5 @@ export async function POST(request: Request) {
     return Response.json({ error: parsed.error }, { status: 400 });
   }
 
-  return Response.json(createEvent(parsed.value), { status: 201 });
+  return Response.json(await createEvent(parsed.value), { status: 201 });
 }

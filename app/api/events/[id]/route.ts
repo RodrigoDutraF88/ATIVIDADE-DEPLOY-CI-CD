@@ -7,7 +7,7 @@ type Context = { params: Promise<{ id: string }> };
 
 export async function GET(_request: Request, { params }: Context) {
   const { id } = await params;
-  const event = getEvent(id);
+  const event = await getEvent(id);
   if (!event) {
     return Response.json({ error: "not found" }, { status: 404 });
   }
@@ -29,7 +29,7 @@ export async function PUT(request: Request, { params }: Context) {
     return Response.json({ error: parsed.error }, { status: 400 });
   }
 
-  const event = updateEvent(id, parsed.value);
+  const event = await updateEvent(id, parsed.value);
   if (!event) {
     return Response.json({ error: "not found" }, { status: 404 });
   }
@@ -38,7 +38,7 @@ export async function PUT(request: Request, { params }: Context) {
 
 export async function DELETE(_request: Request, { params }: Context) {
   const { id } = await params;
-  if (!deleteEvent(id)) {
+  if (!(await deleteEvent(id))) {
     return Response.json({ error: "not found" }, { status: 404 });
   }
   return new Response(null, { status: 204 });
