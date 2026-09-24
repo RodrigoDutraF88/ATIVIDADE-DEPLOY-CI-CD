@@ -172,18 +172,12 @@ sessao6() {
     fim "Você puxou o prato em ${mttr}s. Rollback dominado."
     return
   fi
-  if [ -f "$DIR/.github/workflows/deploy.yml" ] && grep -qi 'health' "$DIR/.github/workflows/deploy.yml"; then
-    ok "deploy.yml confere /health antes de dar o deploy como bom (health-gate)"
-  else
-    falha "deploy.yml sem smoke test de /health"; dica "adicione um passo que confere /api/health após publicar (veja gabarito/deploy.yml)"
-  fi
-  if [ -n "$url" ]; then
-    local code; code="$(http_status "$url/api/health")"
-    if [ "$code" = "200" ]; then ok "produção saudável agora (/health 200)"
-    else falha "/health respondeu ${code}"; fi
-  fi
-  printf "      ${amar}↳${z} treine o rollback: ./verificar.sh 6 --incidente\n"
-  fim "Rollback e health-gate no lugar — produção protegida."
+  if [ -z "$url" ]; then falha "sem a URL do deploy"; dica "faça a Sessão 3 antes"; fim "..."; return; fi
+  local code; code="$(http_status "$url/api/health")"
+  if [ "$code" = "200" ]; then ok "produção saudável agora (/health 200)"
+  else falha "/health respondeu ${code} — produção não está saudável"; dica "na Vercel, promova o último deploy bom (rollback)"; fi
+  printf "      ${amar}↳${z} treine o rollback com o drill: ./verificar.sh 6 --incidente\n"
+  fim "Você sabe voltar atrás rápido — rollback é rede de segurança, não vergonha."
 }
 
 incidente() {
@@ -209,6 +203,7 @@ sessao7() {
   check_grep "$wf" 'npm test' "roda os testes antes de publicar" "o pipeline não roda 'npm test' antes do deploy"
   check_grep "$wf" 'db:migrate' "roda a migração do banco no deploy" "faltou 'npm run db:migrate' no pipeline"
   check_grep "$wf" 'secrets\.' "usa secrets (sem valor cru no arquivo)" "o pipeline não usa 'secrets.' — nada de token cru no YAML"
+  check_grep "$wf" 'health' "confere /api/health depois de publicar (health-gate)" "faltou o smoke test de /health (health-gate) no pipeline"
   if ( cd "$DIR" && npm run build >/tmp/agenda-build.log 2>&1 ); then ok "npm run build passa localmente"
   else falha "npm run build falhou"; dica "rode 'npm run build' para ver o erro"; fi
   fim "Seu pipeline testa, migra, builda e publica sozinho. Fim da trilha! 🎓"
