@@ -1,0 +1,60 @@
+name: deploy
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Testes (o portão antes de qualquer deploy)
+        run: npm test
+
+      - name: Migrar o banco
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Instalar a CLI da Vercel
+        run: npm i -g vercel@latest
+
+      - name: Puxar as configs de produção
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Buildar com a Vercel
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Publicar em produção
+        id: publicar
+        run: echo "url=$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test do /health (health-gate)
+        run: |
+          for i in $(seq 1 20); do
+            codigo="$(curl -s -o /dev/null -w '%{http_code}' "${{ steps.publicar.outputs.url }}/api/health" || true)"
+            if [ "$codigo" = "200" ]; then
+              echo "health respondeu 200, deploy saudável."
+              exit 0
+            fi
+            echo "tentativa $i: /health = ${codigo:-sem resposta}"
+            sleep 3
+          done
+          echo "/health não respondeu 200. Faça rollback pela Vercel."
+          exit 1
