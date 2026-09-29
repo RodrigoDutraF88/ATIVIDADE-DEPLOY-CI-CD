@@ -163,7 +163,7 @@ sessao5() {
 
 # --- Sessão 6 --------------------------------------------------------------
 sessao6() {
-  banner 6 "promoção segura: health-gate + rollback"
+  banner 6 "dono do pipeline + rollback (entrega)"
   local url; url="$(carregar_url)"
   if [ -f "$INC_FILE" ] && [ -n "$url" ] && [ "$(http_status "$url/api/health")" = "200" ]; then
     local ini agora mttr; ini="$(cat "$INC_FILE")"; agora="$(date +%s)"; mttr=$(( agora - ini ))
@@ -172,12 +172,19 @@ sessao6() {
     fim "Você puxou o prato em ${mttr}s. Rollback dominado."
     return
   fi
-  if [ -z "$url" ]; then falha "sem a URL do deploy"; dica "faça a Sessão 3 antes"; fim "..."; return; fi
-  local code; code="$(http_status "$url/api/health")"
-  if [ "$code" = "200" ]; then ok "produção saudável agora (/health 200)"
-  else falha "/health respondeu ${code} — produção não está saudável"; dica "na Vercel, promova o último deploy bom (rollback)"; fi
+  local wf="$DIR/.github/workflows/deploy.yml"
+  if [ ! -f "$wf" ]; then falha "não encontrei .github/workflows/deploy.yml"; dica "crie o pipeline (veja gabarito/deploy.yml)"; fim "..."; return; fi
+  ok "deploy.yml encontrado"
+  check_grep "$wf" 'vercel build' "builda com a Vercel (vercel build)" "faltou 'vercel build' no pipeline"
+  check_grep "$wf" 'deploy --prebuilt' "publica o build pronto (vercel deploy --prebuilt)" "faltou 'vercel deploy --prebuilt'"
+  check_grep "$wf" 'npm test' "roda os testes antes de publicar" "o pipeline não roda 'npm test' antes do deploy"
+  check_grep "$wf" 'db:migrate' "roda a migração do banco no deploy" "faltou 'npm run db:migrate' no pipeline"
+  check_grep "$wf" 'secrets\.' "usa secrets (sem valor cru no arquivo)" "o pipeline não usa 'secrets.' — nada de token cru no YAML"
+  check_grep "$wf" 'health' "confere /api/health depois de publicar (health-gate)" "faltou o smoke test de /health (health-gate)"
+  if ( cd "$DIR" && npm run build >/tmp/agenda-build.log 2>&1 ); then ok "npm run build passa localmente"
+  else falha "npm run build falhou"; dica "rode 'npm run build' para ver o erro"; fi
   printf "      ${amar}↳${z} treine o rollback com o drill: ./verificar.sh 6 --incidente\n"
-  fim "Você sabe voltar atrás rápido — rollback é rede de segurança, não vergonha."
+  fim "Pipeline com health-gate e rollback no bolso. Entrega feita — fim da parte essencial! 🎓"
 }
 
 incidente() {
@@ -194,19 +201,21 @@ incidente() {
 
 # --- Sessão 7 --------------------------------------------------------------
 sessao7() {
-  banner 7 "dono do pipeline: Actions + Vercel CLI"
-  local wf="$DIR/.github/workflows/deploy.yml"
-  if [ ! -f "$wf" ]; then falha "não encontrei .github/workflows/deploy.yml"; dica "crie o pipeline (veja gabarito/deploy.yml)"; fim "..."; return; fi
-  ok "deploy.yml encontrado"
-  check_grep "$wf" 'vercel build' "builda com a Vercel (vercel build)" "faltou 'vercel build' no pipeline"
-  check_grep "$wf" 'deploy --prebuilt' "publica o build pronto (vercel deploy --prebuilt)" "faltou 'vercel deploy --prebuilt'"
-  check_grep "$wf" 'npm test' "roda os testes antes de publicar" "o pipeline não roda 'npm test' antes do deploy"
-  check_grep "$wf" 'db:migrate' "roda a migração do banco no deploy" "faltou 'npm run db:migrate' no pipeline"
-  check_grep "$wf" 'secrets\.' "usa secrets (sem valor cru no arquivo)" "o pipeline não usa 'secrets.' — nada de token cru no YAML"
-  check_grep "$wf" 'health' "confere /api/health depois de publicar (health-gate)" "faltou o smoke test de /health (health-gate) no pipeline"
-  if ( cd "$DIR" && npm run build >/tmp/agenda-build.log 2>&1 ); then ok "npm run build passa localmente"
-  else falha "npm run build falhou"; dica "rode 'npm run build' para ver o erro"; fi
-  fim "Seu pipeline testa, migra, builda e publica sozinho. Fim da trilha! 🎓"
+  banner 7 "observabilidade e próximos passos (opcional)"
+  if [ -f "$DIR/README.md" ] && grep -q 'badge.svg' "$DIR/README.md"; then
+    ok "README tem o badge de status do CI"
+  else
+    falha "README sem badge de status do CI"
+    dica "no GitHub: Actions > ci > (...) > Create status badge, e cole no topo do README"
+  fi
+  local url; url="$(carregar_url)"
+  if [ -n "$url" ]; then
+    local code; code="$(http_status "$url/api/health")"
+    if [ "$code" = "200" ]; then ok "produção no ar pra observar (/health 200)"
+    else falha "/health respondeu ${code}"; fi
+  fi
+  printf "      ${amar}↳${z} bônus: ative o Vercel Analytics e explore os Logs no dashboard da Vercel\n"
+  fim "Módulo bônus concluído — agora é olhar o salão e escolher o próximo passo."
 }
 
 # --- entrada ---------------------------------------------------------------
