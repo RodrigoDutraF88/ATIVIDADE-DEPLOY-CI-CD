@@ -21,7 +21,7 @@ ok()    { printf "  ${verde}✓${z} %s\n" "$1"; }
 falha() { printf "  ${verm}✗${z} %s\n" "$1"; FALHOU=1; }
 dica()  { printf "      ${amar}↳${z} %s\n" "$1"; }
 parabens() { printf "\n${verde}${neg}🎉 Parabéns, %s!${z} %s\n" "$NOME" "$1"; }
-quase()    { printf "\n${verm}%s, quase lá.${z} Os itens com ${verm}✗${z} são o que falta — faça e rode de novo.\n" "$NOME"; }
+quase()    { printf "\n${verm}%s, quase lá.${z} Os itens com ${verm}✗${z} são o que falta, faça e rode de novo.\n" "$NOME"; }
 fim()      { if [ "$FALHOU" -eq 0 ]; then parabens "$1"; else quase; fi; }
 banner()   { printf "%sOlá, %s! Conferindo a Sessão %s: %s.%s\n\n" "$neg" "$NOME" "$1" "$2" "$z"; FALHOU=0; }
 
@@ -69,7 +69,7 @@ sessao1() {
   else falha "o workflow não roda os testes"; dica "inclua os passos 'npm ci' e 'npm test' no job"; fi
   if ( cd "$DIR" && npm test >/tmp/agenda-test.log 2>&1 ); then ok "npm test passou na sua máquina"
   else falha "npm test falhou na sua máquina"; dica "rode 'npm test' para ver o erro"; fi
-  fim "Seu CI prova cada push — ninguém mais vai esquecer de rodar os testes."
+  fim "Seu CI prova cada push. Ninguém mais vai esquecer de rodar os testes."
 }
 
 # --- Sessão 2 --------------------------------------------------------------
@@ -78,7 +78,7 @@ sessao2() {
   if ( cd "$DIR" && npm run lint >/tmp/agenda-lint.log 2>&1 ); then ok "npm run lint passou"
   else falha "npm run lint falhou"; dica "rode 'npm run lint' para ver os avisos"; fi
   if ! command -v gh >/dev/null 2>&1; then
-    falha "gh (GitHub CLI) não encontrado — não dá pra checar a proteção do branch"
+    falha "gh (GitHub CLI) não encontrado, não dá pra checar a proteção do branch"
     dica "instale o gh e rode 'gh auth login', ou confira em Settings > Rules no GitHub"
   else
     local slug rs cl total; slug="$(repo_slug)"
@@ -184,12 +184,12 @@ sessao6() {
   check_grep "$wf" 'deploy --prebuilt' "publica o build pronto (vercel deploy --prebuilt)" "faltou 'vercel deploy --prebuilt'"
   check_grep "$wf" 'npm test' "roda os testes antes de publicar" "o pipeline não roda 'npm test' antes do deploy"
   check_grep "$wf" 'db:migrate' "roda a migração do banco no deploy" "faltou 'npm run db:migrate' no pipeline"
-  check_grep "$wf" 'secrets\.' "usa secrets (sem valor cru no arquivo)" "o pipeline não usa 'secrets.' — nada de token cru no YAML"
+  check_grep "$wf" 'secrets\.' "usa secrets (sem valor cru no arquivo)" "o pipeline não usa 'secrets.', nada de token cru no YAML"
   check_grep "$wf" 'health' "confere /api/health depois de publicar (health-gate)" "faltou o smoke test de /health (health-gate)"
   if ( cd "$DIR" && npm run build >/tmp/agenda-build.log 2>&1 ); then ok "npm run build passa localmente"
   else falha "npm run build falhou"; dica "rode 'npm run build' para ver o erro"; fi
   printf "      ${amar}↳${z} treine o rollback com o drill: ./verificar.sh 6 --incidente\n"
-  fim "Pipeline com health-gate e rollback no bolso. Entrega feita — fim da parte essencial! 🎓"
+  fim "Pipeline com health-gate e rollback no bolso. Entrega feita. Fim da parte essencial! 🎓"
 }
 
 incidente() {
@@ -220,7 +220,7 @@ sessao7() {
     else falha "/health respondeu ${code}"; fi
   fi
   printf "      ${amar}↳${z} bônus: ative o Vercel Analytics e explore os Logs no dashboard da Vercel\n"
-  fim "Módulo bônus concluído — agora é olhar o salão e escolher o próximo passo."
+  fim "Módulo bônus concluído. Agora é olhar o salão e escolher o próximo passo."
 }
 
 # --- entrada ---------------------------------------------------------------
