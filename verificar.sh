@@ -79,17 +79,22 @@ sessao2() {
   else falha "npm run lint falhou"; dica "rode 'npm run lint' para ver os avisos"; fi
   if ! command -v gh >/dev/null 2>&1; then
     falha "gh (GitHub CLI) não encontrado — não dá pra checar a proteção do branch"
-    dica "instale o gh e rode 'gh auth login', ou confira em Settings > Branches no GitHub"
+    dica "instale o gh e rode 'gh auth login', ou confira em Settings > Rules no GitHub"
   else
-    local slug ctx; slug="$(repo_slug)"
-    ctx="$(gh api "repos/${slug}/branches/main/protection" --jq '.required_status_checks.contexts | length' 2>/dev/null)"
-    case "$ctx" in
-      ''|*[!0-9]*) falha "o branch main não exige o check do CI para mergear"
-                   dica "em Settings > Branches, proteja o main e marque 'Require status checks to pass'";;
-      0)           falha "proteção existe, mas sem check obrigatório"
-                   dica "marque o check 'testes' como obrigatório em Settings > Branches";;
-      *)           ok "branch main protegido, exigindo ${ctx} check(s) obrigatório(s)";;
-    esac
+    local slug rs cl total; slug="$(repo_slug)"
+    # Rulesets (novo): regras efetivas aplicadas ao branch main
+    rs="$(gh api "repos/${slug}/rules/branches/main" --jq '[.[] | select(.type=="required_status_checks") | (.parameters.required_status_checks | length)] | add // 0' 2>/dev/null)"
+    # Branch protection clássico
+    cl="$(gh api "repos/${slug}/branches/main/protection" --jq '((.required_status_checks.contexts // []) | length)' 2>/dev/null)"
+    case "$rs" in ''|*[!0-9]*) rs=0;; esac
+    case "$cl" in ''|*[!0-9]*) cl=0;; esac
+    total=$(( rs + cl ))
+    if [ "$total" -gt 0 ]; then
+      ok "o main exige check obrigatório para mergear"
+    else
+      falha "o main não exige nenhum check do CI para mergear"
+      dica "na regra de proteção do main: ligue 'Require status checks' E adicione o check 'testes' na lista (ele aparece depois do CI rodar uma vez)"
+    fi
   fi
   fim "O portão está de pé: código vermelho não entra mais no main."
 }
