@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
 # verificar.sh - checagens da Trilha de Deploy & CI/CD da CJR.
-# Uso: ./verificar.sh <numero-da-sessao>   (de 1 a 7)
-#      ./verificar.sh 6 --incidente         (drill de rollback do Modulo 6)
+# Uso: ./verificar.sh <numero-da-sessao>   (de 1 a 5)
+#      ./verificar.sh 4 --incidente         (drill de rollback da Sessão 4)
 #      ./verificar.sh --reset-nome | --reset
 #
-# Itens em vermelho (X) sao o que ainda falta fazer. Faca a tarefa e rode de novo.
+# Itens em vermelho (✗) são o que ainda falta fazer. Faça a tarefa e rode de novo.
 #
 set -u
 
@@ -59,54 +59,69 @@ http_status() { curl -s -o /dev/null -m 8 -w '%{http_code}' "$1" 2>/dev/null || 
 json_get()     { sed -n "s/.*\"$2\":\"\([^\"]*\)\".*/\1/p" <<<"$1"; }
 check_grep()   { if grep -qE "$2" "$1" 2>/dev/null; then ok "$3"; else falha "$4"; fi; }
 
+# O gh precisa estar instalado e logado para ler as regras do repositório no GitHub.
+gh_pronto() {
+  if ! command -v gh >/dev/null 2>&1; then
+    falha "gh (GitHub CLI) não encontrado, não dá pra checar o GitHub"
+    dica "instale o gh e rode 'gh auth login'"
+    return 1
+  fi
+  if ! gh auth status >/dev/null 2>&1; then
+    falha "o gh não está logado"
+    dica "rode 'gh auth login' e tente de novo"
+    return 1
+  fi
+}
+
+checar_protecao() {
+  gh_pronto || return
+  local slug rs cl; slug="$(repo_slug)"
+  # Rulesets (novo): regras efetivas aplicadas ao branch main
+  rs="$(gh api "repos/${slug}/rules/branches/main" --jq '[.[] | select(.type=="required_status_checks") | .parameters.required_status_checks[] | select(.context=="testes")] | length' 2>/dev/null)"
+  # Branch protection clássico
+  cl="$(gh api "repos/${slug}/branches/main/protection" --jq '[(.required_status_checks.contexts // [])[] | select(. == "testes")] | length' 2>/dev/null)"
+  case "$rs" in ''|*[!0-9]*) rs=0;; esac
+  case "$cl" in ''|*[!0-9]*) cl=0;; esac
+  if [ $(( rs + cl )) -gt 0 ]; then
+    ok "o main exige o check testes para mergear"
+  else
+    falha "o main não exige o check testes para mergear"
+    dica "na regra de proteção do main: ligue 'Require status checks' E adicione o check 'testes' na lista (ele aparece depois do CI rodar uma vez)"
+  fi
+}
+
 # --- Sessão 1 --------------------------------------------------------------
 sessao1() {
-  banner 1 "testes no CI"
+  banner 1 "CI e o portão do merge"
   local wf="$DIR/.github/workflows/ci.yml"
-  if [ -f "$wf" ]; then ok "workflow .github/workflows/ci.yml encontrado"
-  else falha "não encontrei .github/workflows/ci.yml"; dica "crie o workflow como está no Mão na massa da Sessão 1"; fi
-  if [ -f "$wf" ] && grep -Eq 'npm (ci|test)' "$wf"; then ok "o workflow instala e roda os testes"
-  else falha "o workflow não roda os testes"; dica "inclua os passos 'npm ci' e 'npm test' no job"; fi
+  if [ -f "$wf" ]; then
+    ok "workflow .github/workflows/ci.yml encontrado"
+    if grep -Eq '^[[:space:]]+testes:' "$wf"; then ok "o job se chama testes (é o nome do check que o portão exige)"
+    else falha "não achei o job testes no ci.yml"; dica "o nome do job vira o nome do check: use 'testes:' embaixo de 'jobs:'"; fi
+    if grep -q 'pull_request' "$wf"; then ok "o workflow roda em todo pull request"
+    else falha "o workflow não roda em pull_request"; dica "em 'on:', coloque 'push:' e 'pull_request:'"; fi
+    if grep -q 'npm run lint' "$wf" && grep -q 'npm test' "$wf"; then ok "o workflow roda o lint e os testes"
+    else falha "o workflow não roda o lint e os testes"; dica "inclua os passos 'npm ci', 'npm run lint' e 'npm test' no job"; fi
+  else
+    falha "não encontrei .github/workflows/ci.yml"; dica "crie o workflow como está no Mão na massa da Sessão 1"
+  fi
   if ( cd "$DIR" && npm test >/tmp/agenda-test.log 2>&1 ); then ok "npm test passou na sua máquina"
   else falha "npm test falhou na sua máquina"; dica "rode 'npm test' para ver o erro"; fi
-  fim "Seu CI prova cada push. Ninguém mais vai esquecer de rodar os testes."
+  if ( cd "$DIR" && npm run lint >/tmp/agenda-lint.log 2>&1 ); then ok "npm run lint passou na sua máquina"
+  else falha "npm run lint falhou"; dica "rode 'npm run lint' para ver os avisos"; fi
+  checar_protecao
+  fim "CI rodando e portão de pé: código vermelho não entra mais no main."
 }
 
 # --- Sessão 2 --------------------------------------------------------------
 sessao2() {
-  banner 2 "o portão: vermelho barra o merge"
-  if ( cd "$DIR" && npm run lint >/tmp/agenda-lint.log 2>&1 ); then ok "npm run lint passou"
-  else falha "npm run lint falhou"; dica "rode 'npm run lint' para ver os avisos"; fi
-  if ! command -v gh >/dev/null 2>&1; then
-    falha "gh (GitHub CLI) não encontrado, não dá pra checar a proteção do branch"
-    dica "instale o gh e rode 'gh auth login', ou confira em Settings > Rules no GitHub"
-  else
-    local slug rs cl total; slug="$(repo_slug)"
-    # Rulesets (novo): regras efetivas aplicadas ao branch main
-    rs="$(gh api "repos/${slug}/rules/branches/main" --jq '[.[] | select(.type=="required_status_checks") | (.parameters.required_status_checks | length)] | add // 0' 2>/dev/null)"
-    # Branch protection clássico
-    cl="$(gh api "repos/${slug}/branches/main/protection" --jq '((.required_status_checks.contexts // []) | length)' 2>/dev/null)"
-    case "$rs" in ''|*[!0-9]*) rs=0;; esac
-    case "$cl" in ''|*[!0-9]*) cl=0;; esac
-    total=$(( rs + cl ))
-    if [ "$total" -gt 0 ]; then
-      ok "o main exige check obrigatório para mergear"
-    else
-      falha "o main não exige nenhum check do CI para mergear"
-      dica "na regra de proteção do main: ligue 'Require status checks' E adicione o check 'testes' na lista (ele aparece depois do CI rodar uma vez)"
-    fi
-  fi
-  fim "O portão está de pé: código vermelho não entra mais no main."
-}
-
-# --- Sessão 3 --------------------------------------------------------------
-sessao3() {
-  banner 3 "no ar: primeiro deploy na Vercel"
+  banner 2 "no ar na Vercel (Checkpoint)"
   local url; url="$(carregar_url)"
   if [ -z "$url" ]; then falha "não tenho a URL do seu deploy"; dica "rode de novo e cole a URL, ou defina AGENDA_URL"; fim "..."; return; fi
   ok "URL de produção: $url"
   local code; code="$(http_status "$url/api/health")"
   if [ "$code" = "200" ]; then ok "/api/health respondeu 200"
+  elif [ "$code" = "401" ]; then falha "/api/health respondeu 401 (URL protegida)"; dica "essa é a URL de um deploy específico: cole o domínio de produção (Settings > Domains) com './verificar.sh --reset'"
   else falha "/api/health respondeu ${code}"; dica "confira o deploy na aba Deployments da Vercel"; fi
   local remoto local_sha; remoto="$(json_get "$(curl -s -m 8 "$url/api/version" 2>/dev/null)" commit)"
   local_sha="$(cd "$DIR" && git rev-parse HEAD 2>/dev/null)"
@@ -115,60 +130,55 @@ sessao3() {
   case "$remoto" in "$local_sha"*) [ -n "$local_sha" ] && match=1;; esac
   if [ "$remoto" = "local" ] || [ -z "$remoto" ]; then match=0; fi
   if [ "$match" = "1" ]; then ok "produção está servindo o seu commit (${remoto:0:7})"
-  else falha "o commit em produção não bate com o seu HEAD"; dica "push do main e espere a Vercel redeployar (prod=${remoto:-?}, local=${local_sha:0:7})"; fi
-  fim "Sua Agenda está no ar servindo o seu commit!"
+  else falha "o commit em produção não bate com o seu HEAD"; dica "mergeie o PR, rode 'git checkout main && git pull' e espere a Vercel redeployar (prod=${remoto:-?}, local=${local_sha:0:7})"; fi
+  if gh_pronto; then
+    local prs; prs="$(gh pr list --repo "$(repo_slug)" --state merged --limit 1 --json number --jq length 2>/dev/null)"
+    case "$prs" in ''|*[!0-9]*) prs=0;; esac
+    if [ "$prs" -gt 0 ]; then ok "a mudança entrou no main por um pull request"
+    else falha "nenhum pull request mergeado no seu fork"; dica "faça a mudança num branch, abra o PR para o main do SEU fork, confira o Preview e mergeie"; fi
+  fi
+  fim "Checkpoint! A Agenda está no ar e toda mudança passa pelo preview antes de virar produção."
 }
 
-# --- Sessão 4 --------------------------------------------------------------
-sessao4() {
-  banner 4 "persistência: banco no Supabase"
+# --- Sessão 3 --------------------------------------------------------------
+sessao3() {
+  banner 3 "persistência e segredos"
   local url; url="$(carregar_url)"
-  if [ -z "$url" ]; then falha "sem a URL do deploy"; dica "faça a Sessão 3 antes"; fim "..."; return; fi
-  local db; db="$(json_get "$(curl -s -m 8 "$url/api/health" 2>/dev/null)" database)"
-  if [ "$db" = "up" ]; then ok "produção conectada ao banco (health: database=up)"
-  else falha "produção ainda sem banco (health: database=${db:-?})"; dica "configure DATABASE_URL nas Environment Variables da Vercel e faça redeploy"; fi
-  local marker="verificar-$(date +%s)" created id
-  created="$(curl -s -m 8 -X POST "$url/api/events" -H 'Content-Type: application/json' -d "{\"title\":\"$marker\",\"start\":\"2027-01-01T10:00:00.000Z\"}" 2>/dev/null)"
-  id="$(json_get "$created" id)"
-  if [ -n "$id" ] && curl -s -m 8 "$url/api/events" 2>/dev/null | grep -q "$marker"; then
-    ok "evento criado e lido de volta em produção (persistiu)"
-    curl -s -m 8 -X DELETE "$url/api/events/$id" >/dev/null 2>&1
+  if [ -z "$url" ]; then
+    falha "sem a URL do deploy"; dica "faça a Sessão 2 antes, ou defina AGENDA_URL"
   else
-    falha "não consegui criar/ler um evento em produção"
-    dica "rode a migração (npm run db:migrate) e confira a tabela events no Supabase"
+    local db; db="$(json_get "$(curl -s -m 8 "$url/api/health" 2>/dev/null)" database)"
+    if [ "$db" = "up" ]; then ok "produção conectada ao banco (health: database=up)"
+    else falha "produção ainda sem banco (health: database=${db:-?})"; dica "configure DATABASE_URL nas Environment Variables da Vercel (Production) e faça Redeploy"; fi
+    local marker="verificar-$(date +%s)" created id
+    created="$(curl -s -m 8 -X POST "$url/api/events" -H 'Content-Type: application/json' -d "{\"title\":\"$marker\",\"start\":\"2027-01-01T10:00:00.000Z\"}" 2>/dev/null)"
+    id="$(json_get "$created" id)"
+    if [ -n "$id" ] && curl -s -m 8 "$url/api/events" 2>/dev/null | grep -q "$marker"; then
+      ok "evento criado e lido de volta em produção (persistiu)"
+      curl -s -m 8 -X DELETE "$url/api/events/$id" >/dev/null 2>&1
+    else
+      falha "não consegui criar/ler um evento em produção"
+      dica "rode a migração (npm run db:migrate:local) e confira a tabela events no Supabase"
+    fi
   fi
   if [ -f "$DIR/.env.local" ] && grep -q 'DATABASE_URL=..*' "$DIR/.env.local"; then ok ".env.local com DATABASE_URL (local)"
   else falha ".env.local sem DATABASE_URL"; dica "cp .env.example .env.local e cole a URL do Supabase"; fi
   if ( cd "$DIR" && git check-ignore -q .env.local ) 2>/dev/null; then ok ".env.local está ignorado pelo git (segredo fora do repo)"
   else falha ".env.local NÃO está sendo ignorado pelo git"; dica "garanta que '.env*.local' está no .gitignore"; fi
-  fim "A Agenda agora persiste de verdade: banco no ar e segredo fora do git."
-}
-
-# --- Sessão 5 --------------------------------------------------------------
-sessao5() {
-  banner 5 "preview por PR"
-  local achou=0 f
-  for f in "$DIR"/.github/workflows/*.yml "$DIR"/.github/workflows/*.yaml; do
-    [ -f "$f" ] && grep -qE 'pull_request' "$f" && achou=1
-  done
-  if [ "$achou" = "1" ]; then ok "há workflow rodando em pull_request (todo PR é checado)"
-  else falha "nenhum workflow dispara em pull_request"; dica "garanta 'on: pull_request' no seu ci.yml"; fi
   if command -v gitleaks >/dev/null 2>&1; then
     if ( cd "$DIR" && gitleaks detect --no-banner >/tmp/agenda-gitleaks.log 2>&1 ); then ok "gitleaks não encontrou segredos no repositório"
-    else falha "gitleaks encontrou possível segredo no repositório"; dica "veja /tmp/agenda-gitleaks.log e remova o segredo do git"; fi
+    else falha "gitleaks encontrou possível segredo no repositório"; dica "veja /tmp/agenda-gitleaks.log, tire o segredo do git e troque a senha no Supabase"; fi
   else
     if ( cd "$DIR" && git grep -nIE 'postgres(ql)?://[^ ]*:[^ ]*@|sk_live_|ghp_[0-9A-Za-z]{20}' -- . ':!*.example' ':!verificar.sh' >/tmp/agenda-segredos.log 2>&1 ); then
       falha "encontrei algo com cara de segredo versionado"; dica "veja /tmp/agenda-segredos.log (instale o gitleaks para uma checagem melhor)"
     else ok "sem segredos óbvios versionados (instale o gitleaks para checagem completa)"; fi
   fi
-  if ( cd "$DIR" && git check-ignore -q .env.local ) 2>/dev/null; then ok ".env.local ignorado pelo git"
-  else falha ".env.local não está ignorado"; dica "adicione '.env*.local' ao .gitignore"; fi
-  fim "Preview por PR funcionando e nenhum segredo vazou pro git."
+  fim "A Agenda agora persiste de verdade: banco no ar e nenhum segredo no git."
 }
 
-# --- Sessão 6 --------------------------------------------------------------
-sessao6() {
-  banner 6 "dono do pipeline + rollback (entrega)"
+# --- Sessão 4 --------------------------------------------------------------
+sessao4() {
+  banner 4 "dono do pipeline + rollback (Entrega)"
   local url; url="$(carregar_url)"
   if [ -f "$INC_FILE" ] && [ -n "$url" ] && [ "$(http_status "$url/api/health")" = "200" ]; then
     local ini agora mttr; ini="$(cat "$INC_FILE")"; agora="$(date +%s)"; mttr=$(( agora - ini ))
@@ -186,27 +196,33 @@ sessao6() {
   check_grep "$wf" 'db:migrate' "roda a migração do banco no deploy" "faltou 'npm run db:migrate' no pipeline"
   check_grep "$wf" 'secrets\.' "usa secrets (sem valor cru no arquivo)" "o pipeline não usa 'secrets.', nada de token cru no YAML"
   check_grep "$wf" 'health' "confere /api/health depois de publicar (health-gate)" "faltou o smoke test de /health (health-gate)"
+  if [ -f "$DIR/vercel.json" ] && grep -Eq '"main"[[:space:]]*:[[:space:]]*false' "$DIR/vercel.json"; then
+    ok "a Vercel não publica mais o main sozinha (só o seu pipeline publica)"
+  else
+    falha "a Vercel ainda publica o main sozinha"
+    dica "crie o vercel.json com git.deploymentEnabled.main = false (veja gabarito/vercel.json)"
+  fi
   if ( cd "$DIR" && npm run build >/tmp/agenda-build.log 2>&1 ); then ok "npm run build passa localmente"
   else falha "npm run build falhou"; dica "rode 'npm run build' para ver o erro"; fi
-  printf "      ${amar}↳${z} treine o rollback com o drill: ./verificar.sh 6 --incidente\n"
+  printf "      ${amar}↳${z} treine o rollback com o drill: ./verificar.sh 4 --incidente\n"
   fim "Pipeline com health-gate e rollback no bolso. Entrega feita. Fim da parte essencial! 🎓"
 }
 
 incidente() {
   NOME="$(carregar_nome)"
   local url; url="$(carregar_url)"
-  if [ -z "$url" ]; then echo "Preciso da URL do deploy primeiro (faça a Sessão 3)."; return 1; fi
+  if [ -z "$url" ]; then echo "Preciso da URL do deploy primeiro (faça a Sessão 2)."; return 1; fi
   date +%s > "$INC_FILE"
   printf "%s🚨 Simulação de incidente, %s.%s\n" "$neg" "$NOME" "$z"
   printf "Produção: %s\n" "$url"
   printf "Na Vercel: Deployments → pegue o deploy ANTERIOR (o que funcionava) → Promote to Production.\n"
-  printf "Quando o /api/health voltar a 200, rode:  ./verificar.sh 6\n"
+  printf "Quando o /api/health voltar a 200, rode:  ./verificar.sh 4\n"
   printf "Estou cronometrando o seu MTTR...\n"
 }
 
-# --- Sessão 7 --------------------------------------------------------------
-sessao7() {
-  banner 7 "observabilidade e próximos passos (opcional)"
+# --- Sessão 5 --------------------------------------------------------------
+sessao5() {
+  banner 5 "observabilidade e próximos passos (opcional)"
   if [ -f "$DIR/README.md" ] && grep -q 'badge.svg' "$DIR/README.md"; then
     ok "README tem o badge de status do CI"
   else
@@ -220,7 +236,7 @@ sessao7() {
     else falha "/health respondeu ${code}"; fi
   fi
   printf "      ${amar}↳${z} bônus: ative o Vercel Analytics e explore os Logs no dashboard da Vercel\n"
-  fim "Módulo bônus concluído. Agora é olhar o salão e escolher o próximo passo."
+  fim "Sessão bônus concluída. Agora é olhar o salão e escolher o próximo passo."
 }
 
 # --- entrada ---------------------------------------------------------------
@@ -229,7 +245,7 @@ case "${1:-}" in
   --reset)      rm -f "$NOME_FILE" "$URL_FILE" "$INC_FILE"; echo "Estado zerado (nome, URL e incidente)."; exit 0;;
 esac
 
-if [ "${1:-}" = "6" ] && [ "${2:-}" = "--incidente" ]; then
+if [ "${1:-}" = "4" ] && [ "${2:-}" = "--incidente" ]; then
   incidente; exit 0
 fi
 
@@ -241,14 +257,12 @@ case "${1:-}" in
   3) sessao3;;
   4) sessao4;;
   5) sessao5;;
-  6) sessao6;;
-  7) sessao7;;
   ""|-h|--help)
-    echo "Uso: ./verificar.sh <numero-da-sessao>   (de 1 a 7)"
-    echo "     ./verificar.sh 6 --incidente         (drill de rollback)"
+    echo "Uso: ./verificar.sh <numero-da-sessao>   (de 1 a 5)"
+    echo "     ./verificar.sh 4 --incidente         (drill de rollback)"
     echo "     ./verificar.sh --reset-nome | --reset"
     exit 0;;
-  *) echo "Sessão inválida: ${1}. Use um número de 1 a 7."; exit 1;;
+  *) echo "Sessão inválida: ${1}. Use um número de 1 a 5."; exit 1;;
 esac
 
 exit "$FALHOU"
